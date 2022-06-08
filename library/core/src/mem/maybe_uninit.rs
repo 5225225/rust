@@ -626,11 +626,18 @@ impl<T> MaybeUninit<T> {
     #[inline(always)]
     #[rustc_diagnostic_item = "assume_init"]
     #[track_caller]
+    #[rustc_allow_const_fn_unstable(const_refs_to_cell, const_eval_select)]
     pub const unsafe fn assume_init(self) -> T {
         // SAFETY: the caller must guarantee that `self` is initialized.
         // This also means that `self` must be a `value` variant.
         unsafe {
             intrinsics::assert_inhabited::<T>();
+            let runtime = || {
+                intrinsics::assert_validity_of::<T>(&self as *const MaybeUninit<T> as *const T);
+            };
+            const fn comptime() {}
+
+            intrinsics::const_eval_select((), comptime, runtime);
             ManuallyDrop::into_inner(self.value)
         }
     }

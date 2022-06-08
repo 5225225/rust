@@ -2035,6 +2035,7 @@ pub(crate) fn is_nonoverlapping<T>(src: *const T, dst: *const T, count: usize) -
     diff >= size
 }
 
+
 /// Copies `count * size_of::<T>()` bytes from `src` to `dst`. The source
 /// and destination must *not* overlap.
 ///
@@ -2137,6 +2138,34 @@ pub const unsafe fn copy_nonoverlapping<T>(src: *const T, dst: *mut T, count: us
         copy_nonoverlapping(src, dst, count)
     }
 }
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct Invariant {
+    offset: u64,
+    size: u64,
+    start: u128,
+    end: u128,
+}
+
+
+#[cfg(not(bootstrap))]
+/// Returns a list of all validity invariants of the type.
+pub const fn validity_invariants_of<T>() -> &'static [Invariant] {
+    extern "rust-intrinsic" {
+        #[rustc_const_stable(feature = "validity_invariants_of", since = "1.40.0")]
+        pub fn validity_invariants_of<T>() -> &'static [u8];
+    }
+
+    let invariants: &'static [u8] = validity_invariants_of::<T>();
+    let sz = invariants.len() / core::mem::size_of::<Invariant>();
+
+    // SAFETY: we know this is valid.
+    unsafe {
+        core::slice::from_raw_parts(invariants.as_ptr().cast(), sz)
+    }
+}
+
 
 /// Copies `count * size_of::<T>()` bytes from `src` to `dst`. The source
 /// and destination may overlap.
@@ -2392,4 +2421,60 @@ where
     G: FnOnce<ARG, Output = RET> + ~const Destruct,
 {
     called_in_const.call_once(arg)
+}
+
+#[cfg(bootstrap)]
+pub const unsafe fn assert_validity_of<T>(_: *const T) -> bool {
+    true
+}
+
+// You need to be *very* careful to not be accidentally recursive here.
+// This generally means doing as few function calls as possible
+#[cfg(not(bootstrap))]
+pub fn assert_validity_of<T>(value: *const T) -> bool {
+    #[repr(packed)]
+    struct Unaligned<T>(T);
+
+    // SAFETY: uhhh meow.
+    unsafe {
+        let invariants = validity_invariants_of::<T>();
+        for invariant in invariants {
+            let off = invariant.offset as usize;
+            let start = invariant.start;
+            let end = invariant.end;
+
+            let (value, max): (u128, u128) = match invariant.size {
+                1 => ((*(value.cast::<u8>().add(off))).into(), u8::MAX.into()),
+                2 => (
+                    (*value.cast::<u8>().add(off).cast::<Unaligned<u16>>()).0.into(),
+                    u16::MAX.into(),
+                ),
+                4 => (
+                    (*value.cast::<u8>().add(off).cast::<Unaligned<u32>>()).0.into(),
+                    u32::MAX.into(),
+                ),
+                8 => (
+                    (*value.cast::<u8>().add(off).cast::<Unaligned<u64>>()).0.into(),
+                    u64::MAX.into(),
+                ),
+                16 => (
+                    (*value.cast::<u8>().add(off).cast::<Unaligned<u128>>()).0.into(),
+                    u128::MAX.into(),
+                ),
+                _ => panic!("oh no!"),
+            };
+
+            if start > end {
+                if !((start..=max).contains(&value) || (0..=end).contains(&value)) {
+                    panic!("value {} not in range of {} {}", value, start, end);
+                }
+            } else {
+                if !(start..=end).contains(&value) {
+                    panic!("value {} not in range of {} {}", value, start, end);
+                }
+            }
+        }
+
+        true
+    }
 }

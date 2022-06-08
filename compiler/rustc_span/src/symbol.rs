@@ -1512,6 +1512,7 @@ symbols! {
         va_list,
         va_start,
         val,
+        validity_invariants_of,
         values,
         var,
         variant_count,
