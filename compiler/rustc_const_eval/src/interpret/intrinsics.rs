@@ -106,7 +106,7 @@ pub(crate) fn eval_nullary_intrinsic<'tcx>(
         },
         sym::validity_invariants_of => {
             ensure_monomorphic_enough(tcx, tp_ty)?;
-            let alloc = validity_invariants_of::alloc_type_name(tcx, tp_ty);
+            let alloc = validity_invariants_of::alloc_validity_invariants_of(tcx, tp_ty);
             ConstValue::Slice { data: alloc, start: 0, end: alloc.inner().len() }
         }
         other => bug!("`{}` is not a zero arg intrinsic", other),
@@ -176,7 +176,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
                     sym::needs_drop => self.tcx.types.bool,
                     sym::type_id => self.tcx.types.u64,
                     sym::type_name => self.tcx.mk_static_str(),
-                    sym::validity_invariants_of => self.tcx.mk_static_str(),
+                    sym::validity_invariants_of => self.tcx.mk_static_bytes(),
                     _ => bug!("already checked for nullary intrinsics"),
                 };
                 let val =
