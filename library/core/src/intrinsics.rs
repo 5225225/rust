@@ -2460,16 +2460,16 @@ pub fn assert_validity_of<T>(value: *const T) -> bool {
                     (*value.cast::<u8>().add(off).cast::<Unaligned<u128>>()).0.into(),
                     u128::MAX.into(),
                 ),
-                _ => panic!("oh no!"),
+                s => panic!("unexpected size {s}"),
             };
 
             if start > end {
                 if !((start..=max).contains(&value) || (0..=end).contains(&value)) {
-                    panic!("value {} not in range of {} {}", value, start, end);
+                    panic!("value {} not in range of {} {} for field at offset {} of type {}", value, start, end, off, type_name::<T>());
                 }
             } else {
                 if !(start..=end).contains(&value) {
-                    panic!("value {} not in range of {} {}", value, start, end);
+                    panic!("value {} not in range of {} {} for field at offset {} of type {}", value, start, end, off, type_name::<T>());
                 }
             }
         }
