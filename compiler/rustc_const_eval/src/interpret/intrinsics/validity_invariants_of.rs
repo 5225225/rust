@@ -1,14 +1,9 @@
-use rustc_data_structures::intern::Interned;
-use rustc_hir::def_id::CrateNum;
-use rustc_hir::definitions::DisambiguatedDefPathData;
 use rustc_middle::mir::interpret::{Allocation, ConstAllocation};
-use rustc_middle::ty::{
-    self,
-    print::{PrettyPrinter, Print, Printer},
-    subst::{GenericArg, GenericArgKind},
-    Ty, TyCtxt,
-};
-use std::fmt::Write;
+use rustc_middle::mir::Mutability;
+use rustc_middle::ty::layout::LayoutCx;
+use rustc_middle::ty::{ParamEnv, ParamEnvAnd};
+use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_target::abi::{Abi, Align, Endian, FieldsShape, HasDataLayout, Scalar, WrappingRange};
 
 #[derive(Debug, Clone, Copy)]
 struct Invariant {
@@ -20,15 +15,7 @@ struct Invariant {
 
 use rustc_target::abi::Size;
 
-fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invariant>, offset: Size, depth: usize) {
-    if depth == 0 { return; }
-
-    use rustc_middle::mir::Mutability;
-    use rustc_middle::ty::{ParamEnv, ParamEnvAnd};
-    use rustc_target::abi::{Abi, Align, Scalar, WrappingRange, FieldsShape};
-    use rustc_middle::ty::layout::LayoutCx;
-    use rustc_target::abi::TyAndLayout;
-
+fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invariant>, offset: Size) {
     let x = tcx.layout_of(ParamEnvAnd { param_env: ParamEnv::reveal_all(), value: ty });
 
     if let Ok(layout) = x {
@@ -38,21 +25,29 @@ fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invarian
             invs.push(Invariant { offset, size, start, end })
         }
 
-        let fields = layout.layout.fields();
-
         let param_env = ParamEnv::reveal_all();
         let unwrap = LayoutCx { tcx, param_env };
 
         match layout.layout.fields() {
-            FieldsShape::Primitive => {},
-            FieldsShape::Union(_) => {},
-            FieldsShape::Array{ .. } => {
-                // TODO: We *could* check arrays, but do that as future work.
-            },
-            FieldsShape::Arbitrary { offsets, memory_index } => {
+            FieldsShape::Primitive => {}
+            FieldsShape::Union(_) => {}
+            FieldsShape::Array { stride, count } => {
+                for idx in 0..*count {
+                    let off = offset + *stride * idx;
+                    let f = layout.field(&unwrap, idx as usize);
+                    add_invariants(tcx, f.ty, invs, off);
+                }
+            }
+            FieldsShape::Arbitrary { offsets, .. } => {
                 for (idx, &field_offset) in offsets.iter().enumerate() {
                     let f = layout.field(&unwrap, idx);
-                    add_invariants(tcx, f.ty, invs, offset+field_offset, depth - 1)
+                    if f.ty == ty {
+                        // Some types contain themselves as fields, such as
+                        // &mut [T]
+                        // Easy solution is to just not recurse then.
+                    } else {
+                        add_invariants(tcx, f.ty, invs, offset + field_offset);
+                    }
                 }
             }
         }
@@ -60,24 +55,48 @@ fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invarian
 }
 
 /// Directly returns an `Allocation` containing a list of validity invariants of the given type.
-pub(crate) fn alloc_validity_invariants_of<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> ConstAllocation<'tcx> {
-    use rustc_middle::mir::Mutability;
-    use rustc_middle::ty::{ParamEnv, ParamEnvAnd};
-    use rustc_target::abi::{Abi, Align, Scalar, WrappingRange};
-    use rustc_middle::ty::layout::LayoutCx;
-    use rustc_target::abi::TyAndLayout;
-
+pub(crate) fn alloc_validity_invariants_of<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+) -> ConstAllocation<'tcx> {
     let mut invs: Vec<Invariant> = Vec::new();
 
-    add_invariants(tcx, ty, &mut invs, Size::ZERO, 3);
+    add_invariants(tcx, ty, &mut invs, Size::ZERO);
 
     let mut path = Vec::new();
 
+    let layout = tcx.data_layout();
+
+    let encode_size = match (layout.endian, layout.pointer_size.bits()) {
+        (Endian::Little, 16) => {
+            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u16).to_le_bytes())
+        }
+        (Endian::Little, 32) => {
+            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u32).to_le_bytes())
+        }
+        (Endian::Little, 64) => {
+            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes()).to_le_bytes())
+        }
+        (Endian::Big, 16) => {
+            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u16).to_be_bytes())
+        }
+        (Endian::Big, 32) => {
+            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u32).to_be_bytes())
+        }
+        (Endian::Big, 64) => |s: Size, path: &mut Vec<u8>| path.extend((s.bytes()).to_be_bytes()),
+        _ => panic!("Unexpected pointer size"),
+    };
+
+    let encode_range = match layout.endian {
+        Endian::Little => |r: u128| r.to_le_bytes(),
+        Endian::Big => |r: u128| r.to_be_bytes(),
+    };
+
     for inv in invs {
-        path.extend(inv.offset.bytes().to_le_bytes());
-        path.extend(inv.size.bytes().to_le_bytes());
-        path.extend(inv.start.to_le_bytes());
-        path.extend(inv.end.to_le_bytes());
+        encode_size(inv.offset, &mut path);
+        encode_size(inv.size, &mut path);
+        path.extend(encode_range(inv.start));
+        path.extend(encode_range(inv.end));
     }
 
     let alloc = Allocation::from_bytes(path, Align::from_bytes(8).unwrap(), Mutability::Not);

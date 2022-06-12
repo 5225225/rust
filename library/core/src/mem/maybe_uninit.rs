@@ -797,11 +797,18 @@ impl<T> MaybeUninit<T> {
     #[stable(feature = "maybe_uninit_ref", since = "1.55.0")]
     #[rustc_const_stable(feature = "const_maybe_uninit_assume_init_ref", since = "1.59.0")]
     #[inline(always)]
+    #[rustc_allow_const_fn_unstable(const_eval_select)]
     pub const unsafe fn assume_init_ref(&self) -> &T {
         // SAFETY: the caller must guarantee that `self` is initialized.
         // This also means that `self` must be a `value` variant.
         unsafe {
             intrinsics::assert_inhabited::<T>();
+            let runtime = || {
+                intrinsics::assert_validity_of::<T>(self as *const MaybeUninit<T> as *const T);
+            };
+            const fn comptime() {}
+
+            intrinsics::const_eval_select((), comptime, runtime);
             &*self.as_ptr()
         }
     }
@@ -919,6 +926,12 @@ impl<T> MaybeUninit<T> {
         // This also means that `self` must be a `value` variant.
         unsafe {
             intrinsics::assert_inhabited::<T>();
+            let runtime = || {
+                intrinsics::assert_validity_of::<T>(self as *const MaybeUninit<T> as *const T);
+            };
+            const fn comptime() {}
+
+            intrinsics::const_eval_select((), comptime, runtime);
             &mut *self.as_mut_ptr()
         }
     }

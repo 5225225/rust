@@ -2147,7 +2147,6 @@ pub struct Invariant {
     end: u128,
 }
 
-
 #[cfg(not(bootstrap))]
 /// Returns a list of all validity invariants of the type.
 pub const fn validity_invariants_of<T>() -> &'static [Invariant] {
@@ -2160,11 +2159,8 @@ pub const fn validity_invariants_of<T>() -> &'static [Invariant] {
     let sz = invariants.len() / core::mem::size_of::<Invariant>();
 
     // SAFETY: we know this is valid.
-    unsafe {
-        core::slice::from_raw_parts(invariants.as_ptr().cast(), sz)
-    }
+    unsafe { core::slice::from_raw_parts(invariants.as_ptr().cast(), sz) }
 }
-
 
 /// Copies `count * size_of::<T>()` bytes from `src` to `dst`. The source
 /// and destination may overlap.
@@ -2465,11 +2461,25 @@ pub fn assert_validity_of<T>(value: *const T) -> bool {
 
             if start > end {
                 if !((start..=max).contains(&value) || (0..=end).contains(&value)) {
-                    panic!("value {} not in range of {} {} for field at offset {} of type {}", value, start, end, off, type_name::<T>());
+                    panic!(
+                        "value {} not in range of {} {} for field at offset {} of type {}",
+                        value,
+                        start,
+                        end,
+                        off,
+                        type_name::<T>()
+                    );
                 }
             } else {
                 if !(start..=end).contains(&value) {
-                    panic!("value {} not in range of {} {} for field at offset {} of type {}", value, start, end, off, type_name::<T>());
+                    panic!(
+                        "value {} not in range of {} {} for field at offset {} of type {}",
+                        value,
+                        start,
+                        end,
+                        off,
+                        type_name::<T>()
+                    );
                 }
             }
         }
