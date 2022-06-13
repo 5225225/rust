@@ -2423,14 +2423,14 @@ pub const unsafe fn assert_validity_of<T>(_: *const T) -> bool {
     true
 }
 
-// You need to be *very* careful to not be accidentally recursive here.
-// This generally means doing as few function calls as possible
 #[cfg(not(bootstrap))]
-pub fn assert_validity_of<T>(value: *const T) -> bool {
+/// Asserts that the value at `value` is valid at type T.
+/// Best effort, and is UB if the value is invalid.
+pub(crate) unsafe fn assert_validity_of<T>(value: *const T) -> bool {
     #[repr(packed)]
     struct Unaligned<T>(T);
 
-    // SAFETY: uhhh meow.
+    // SAFETY: 
     unsafe {
         let invariants = validity_invariants_of::<T>();
         for invariant in invariants {
