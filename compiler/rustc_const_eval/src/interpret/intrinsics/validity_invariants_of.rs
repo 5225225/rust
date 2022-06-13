@@ -3,7 +3,7 @@ use rustc_middle::mir::Mutability;
 use rustc_middle::ty::layout::LayoutCx;
 use rustc_middle::ty::{ParamEnv, ParamEnvAnd};
 use rustc_middle::ty::{Ty, TyCtxt};
-use rustc_target::abi::{Abi, Align, Endian, FieldsShape, HasDataLayout, Scalar, WrappingRange};
+use rustc_target::abi::{Abi, Align, Endian, FieldsShape, HasDataLayout, Scalar, WrappingRange, Size};
 
 #[derive(Debug, Clone, Copy)]
 struct Invariant {
@@ -12,8 +12,6 @@ struct Invariant {
     start: u128,
     end: u128,
 }
-
-use rustc_target::abi::Size;
 
 fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invariant>, offset: Size) {
     let x = tcx.layout_of(ParamEnvAnd { param_env: ParamEnv::reveal_all(), value: ty });
@@ -32,6 +30,7 @@ fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invarian
             FieldsShape::Primitive => {}
             FieldsShape::Union(_) => {}
             FieldsShape::Array { stride, count } => {
+                // TODO: should we just bail if we're making a Too Large type?
                 for idx in 0..*count {
                     let off = offset + *stride * idx;
                     let f = layout.field(&unwrap, idx as usize);
@@ -54,51 +53,73 @@ fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invarian
     }
 }
 
-/// Directly returns an `Allocation` containing a list of validity invariants of the given type.
+fn extend_encoded_int(to: &mut Vec<u8>, endian: Endian, ptr_size: PointerSize, value: Size) {
+    match (endian, ptr_size) {
+        (Endian::Little, PointerSize::Bits16) => {
+            to.extend((value.bytes() as u16).to_le_bytes())
+        }
+        (Endian::Little, PointerSize::Bits32) => {
+            to.extend((value.bytes() as u32).to_le_bytes())
+        }
+        (Endian::Little, PointerSize::Bits64) => {
+            to.extend((value.bytes()).to_le_bytes())
+        }
+        (Endian::Big, PointerSize::Bits16) => {
+            to.extend((value.bytes() as u16).to_be_bytes())
+        }
+        (Endian::Big, PointerSize::Bits32) => {
+            to.extend((value.bytes() as u32).to_be_bytes())
+        }
+        (Endian::Big, PointerSize::Bits64) => to.extend((value.bytes()).to_be_bytes()),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PointerSize {
+    Bits16,
+    Bits32,
+    Bits64,
+}
+
+/// Directly returns a `ConstAllocation` containing a list of validity invariants of the given type.
 pub(crate) fn alloc_validity_invariants_of<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
 ) -> ConstAllocation<'tcx> {
     let mut invs: Vec<Invariant> = Vec::new();
 
-    add_invariants(tcx, ty, &mut invs, Size::ZERO);
-
-    let mut path = Vec::new();
-
     let layout = tcx.data_layout();
 
-    let encode_size = match (layout.endian, layout.pointer_size.bits()) {
-        (Endian::Little, 16) => {
-            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u16).to_le_bytes())
+    let ptr_size = match layout.pointer_size.bits() {
+        16 => PointerSize::Bits16,
+        32 => PointerSize::Bits32,
+        64 => PointerSize::Bits64,
+        _ => {
+            // Not sure if this can happen, but just return an empty slice?
+            let alloc = Allocation::from_bytes(Vec::new(), Align::from_bytes(8).unwrap(), Mutability::Not);
+            return tcx.intern_const_alloc(alloc);
         }
-        (Endian::Little, 32) => {
-            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u32).to_le_bytes())
-        }
-        (Endian::Little, 64) => {
-            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes()).to_le_bytes())
-        }
-        (Endian::Big, 16) => {
-            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u16).to_be_bytes())
-        }
-        (Endian::Big, 32) => {
-            |s: Size, path: &mut Vec<u8>| path.extend((s.bytes() as u32).to_be_bytes())
-        }
-        (Endian::Big, 64) => |s: Size, path: &mut Vec<u8>| path.extend((s.bytes()).to_be_bytes()),
-        _ => panic!("Unexpected pointer size"),
     };
+    
+    add_invariants(tcx, ty, &mut invs, Size::ZERO);
 
     let encode_range = match layout.endian {
         Endian::Little => |r: u128| r.to_le_bytes(),
         Endian::Big => |r: u128| r.to_be_bytes(),
     };
 
+    let mut encoded = Vec::new();
+
+    // TODO: this needs to match the layout of `Invariant` in core/src/intrinsics.rs
+    // how do we ensure that?
     for inv in invs {
-        encode_size(inv.offset, &mut path);
-        encode_size(inv.size, &mut path);
-        path.extend(encode_range(inv.start));
-        path.extend(encode_range(inv.end));
+        extend_encoded_int(&mut encoded, layout.endian, ptr_size, inv.offset);
+        extend_encoded_int(&mut encoded, layout.endian, ptr_size, inv.size);
+        encoded.extend(encode_range(inv.start));
+        encoded.extend(encode_range(inv.end));
     }
 
-    let alloc = Allocation::from_bytes(path, Align::from_bytes(8).unwrap(), Mutability::Not);
+    // TODO: The alignment here should be calculated from the struct definition, I guess?
+    let alloc = Allocation::from_bytes(encoded, Align::from_bytes(8).unwrap(), Mutability::Not);
     tcx.intern_const_alloc(alloc)
 }

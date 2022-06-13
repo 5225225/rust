@@ -177,7 +177,7 @@ impl<'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> InterpCx<'mir, 'tcx, M> {
                     sym::type_id => self.tcx.types.u64,
                     sym::type_name => self.tcx.mk_static_str(),
                     sym::validity_invariants_of => self.tcx.mk_static_bytes(),
-                    _ => bug!("already checked for nullary intrinsics"),
+                    _ => bug!(),
                 };
                 let val =
                     self.tcx.const_eval_global_id(self.param_env, gid, Some(self.tcx.span))?;
