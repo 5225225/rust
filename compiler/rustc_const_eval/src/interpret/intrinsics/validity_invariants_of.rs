@@ -3,7 +3,9 @@ use rustc_middle::mir::Mutability;
 use rustc_middle::ty::layout::LayoutCx;
 use rustc_middle::ty::{ParamEnv, ParamEnvAnd};
 use rustc_middle::ty::{Ty, TyCtxt};
-use rustc_target::abi::{Abi, Align, Endian, FieldsShape, HasDataLayout, Scalar, WrappingRange, Size};
+use rustc_target::abi::{
+    Abi, Align, Endian, FieldsShape, HasDataLayout, Scalar, Size, WrappingRange,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct Invariant {
@@ -30,7 +32,8 @@ fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invarian
             FieldsShape::Primitive => {}
             FieldsShape::Union(_) => {}
             FieldsShape::Array { stride, count } => {
-                // TODO: should we just bail if we're making a Too Large type?
+                // TODO: should we just bail if we're making a Too Large type? 
+                // (Like [bool; 1_000_000])
                 for idx in 0..*count {
                     let off = offset + *stride * idx;
                     let f = layout.field(&unwrap, idx as usize);
@@ -55,21 +58,11 @@ fn add_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, invs: &mut Vec<Invarian
 
 fn extend_encoded_int(to: &mut Vec<u8>, endian: Endian, ptr_size: PointerSize, value: Size) {
     match (endian, ptr_size) {
-        (Endian::Little, PointerSize::Bits16) => {
-            to.extend((value.bytes() as u16).to_le_bytes())
-        }
-        (Endian::Little, PointerSize::Bits32) => {
-            to.extend((value.bytes() as u32).to_le_bytes())
-        }
-        (Endian::Little, PointerSize::Bits64) => {
-            to.extend((value.bytes()).to_le_bytes())
-        }
-        (Endian::Big, PointerSize::Bits16) => {
-            to.extend((value.bytes() as u16).to_be_bytes())
-        }
-        (Endian::Big, PointerSize::Bits32) => {
-            to.extend((value.bytes() as u32).to_be_bytes())
-        }
+        (Endian::Little, PointerSize::Bits16) => to.extend((value.bytes() as u16).to_le_bytes()),
+        (Endian::Little, PointerSize::Bits32) => to.extend((value.bytes() as u32).to_le_bytes()),
+        (Endian::Little, PointerSize::Bits64) => to.extend((value.bytes()).to_le_bytes()),
+        (Endian::Big, PointerSize::Bits16) => to.extend((value.bytes() as u16).to_be_bytes()),
+        (Endian::Big, PointerSize::Bits32) => to.extend((value.bytes() as u32).to_be_bytes()),
         (Endian::Big, PointerSize::Bits64) => to.extend((value.bytes()).to_be_bytes()),
     }
 }
@@ -96,11 +89,12 @@ pub(crate) fn alloc_validity_invariants_of<'tcx>(
         64 => PointerSize::Bits64,
         _ => {
             // Not sure if this can happen, but just return an empty slice?
-            let alloc = Allocation::from_bytes(Vec::new(), Align::from_bytes(8).unwrap(), Mutability::Not);
+            let alloc =
+                Allocation::from_bytes(Vec::new(), Align::from_bytes(8).unwrap(), Mutability::Not);
             return tcx.intern_const_alloc(alloc);
         }
     };
-    
+
     add_invariants(tcx, ty, &mut invs, Size::ZERO);
 
     let encode_range = match layout.endian {

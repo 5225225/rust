@@ -2419,7 +2419,7 @@ where
 }
 
 #[cfg(bootstrap)]
-pub const unsafe fn assert_validity_of<T>(_: *const T) -> bool {
+pub(crate) const unsafe fn assert_validity_of<T>(_: *const T) -> bool {
     true
 }
 
@@ -2430,7 +2430,7 @@ pub(crate) unsafe fn assert_validity_of<T>(value: *const T) -> bool {
     #[repr(packed)]
     struct Unaligned<T>(T);
 
-    // SAFETY: 
+    // SAFETY:
     unsafe {
         let invariants = validity_invariants_of::<T>();
         for invariant in invariants {
@@ -2461,25 +2461,11 @@ pub(crate) unsafe fn assert_validity_of<T>(value: *const T) -> bool {
 
             if start > end {
                 if !((start..=max).contains(&value) || (0..=end).contains(&value)) {
-                    panic!(
-                        "value {} not in range of {} {} for field at offset {} of type {}",
-                        value,
-                        start,
-                        end,
-                        off,
-                        type_name::<T>()
-                    );
+                    return false;
                 }
             } else {
                 if !(start..=end).contains(&value) {
-                    panic!(
-                        "value {} not in range of {} {} for field at offset {} of type {}",
-                        value,
-                        start,
-                        end,
-                        off,
-                        type_name::<T>()
-                    );
+                    return false;
                 }
             }
         }
