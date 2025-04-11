@@ -1169,7 +1169,7 @@ impl<Cx: HasDataLayout> LayoutCalculator<Cx> {
             } else {
                 // Equal to can_randomize_type_layout, only doesn't need the -Zrandomize-layout
                 // flag
-                if !repr.inhibit_struct_field_reordering() {
+                if !repr.inhibit_struct_field_reordering() && repr.pack.is_none() {
                     use rand::SeedableRng;
                     use rand::seq::SliceRandom;
                     // `ReprOptions.field_shuffle_seed` is a deterministic seed we can use to randomize field
