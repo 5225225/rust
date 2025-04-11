@@ -211,6 +211,12 @@ impl ReprOptions {
         !self.inhibit_struct_field_reordering() && self.flags.contains(ReprFlags::RANDOMIZE_LAYOUT)
     }
 
+    pub fn never_randomize_type_layout(&self) -> bool {
+        self.inhibit_struct_field_reordering() ||
+            self.flags.contains(ReprFlags::NEVER_RANDOMIZE_LAYOUT) ||
+            self.packed()
+    }
+
     /// Returns `true` if this `#[repr()]` should inhibit union ABI optimisations.
     pub fn inhibits_union_abi_opt(&self) -> bool {
         self.c()

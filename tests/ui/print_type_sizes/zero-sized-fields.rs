@@ -4,8 +4,9 @@
 
 // At one point, zero-sized fields such as those in this file were causing
 // incorrect output from `-Z print-type-sizes`.
+#![feature(rustc_attrs)]
 
-#[repr(C)]
+#[rustc_never_randomize_layout]
 struct S1 {
     x: u32,
     y: u32,
@@ -15,7 +16,7 @@ struct S1 {
 struct Void();
 struct Empty {}
 
-#[repr(C)]
+#[rustc_never_randomize_layout]
 struct S5<TagW, TagZ> {
     tagw: TagW,
     w: u32,
