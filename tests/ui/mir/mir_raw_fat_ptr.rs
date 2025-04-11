@@ -2,6 +2,7 @@
 // check raw fat pointer ops in mir
 // FIXME: please improve this when we get monomorphization support
 
+#![feature(rustc_attrs)]
 #![allow(ambiguous_wide_pointer_comparisons)]
 
 use std::mem;
@@ -81,11 +82,12 @@ fn simple_eq<'a>(a: *const (dyn Foo+'a), b: *const (dyn Foo+'a)) -> bool {
     result
 }
 
-fn assert_inorder<T: Copy>(a: &[T],
+fn assert_inorder<T: Copy+std::fmt::Debug>(a: &[T],
                            compare: fn(T, T) -> ComparisonResults) {
     for i in 0..a.len() {
         for j in 0..a.len() {
             let cres = compare(a[i], a[j]);
+            //dbg!(i, j, &cres, a[i], a[j]);
             if i < j {
                 assert_eq!(cres, LT);
             } else if i == j {
@@ -105,7 +107,11 @@ impl<T> Foo for T {
 }
 
 #[allow(dead_code)]
+#[rustc_never_randomize_layout]
 struct S<T:?Sized>(u32, T);
+
+#[rustc_never_randomize_layout]
+struct C<A, B, C>(A, B, C);
 
 fn main_ref() {
     let array = [0,1,2,3,4];
@@ -125,6 +131,7 @@ fn main_ref() {
     } else {
         ptrs.push(&array2);
     }
+    println!("a");
     assert_inorder(&ptrs, compare_au8);
 
     let u8_ = (0u8, 1u8);
@@ -140,16 +147,18 @@ fn main_ref() {
         let v : [*const (); 2] = unsafe { mem::transmute(*v) };
         u.cmp(&v)
     });
+    println!("b");
     assert_inorder(buf, compare_foo);
 
     // check ordering for structs containing arrays
-    let ss: (S<[u8; 2]>,
+    let ss: C<S<[u8; 2]>,
              S<[u8; 3]>,
-             S<[u8; 2]>) = (
+             S<[u8; 2]>> = C(
         S(7, [8, 9]),
         S(10, [11, 12, 13]),
         S(4, [5, 6])
     );
+    println!("c");
     assert_inorder(&[
         &ss.0 as *const S<[u8]>,
         &ss.1 as *const S<[u8]>,
@@ -179,6 +188,7 @@ fn main_raw() {
     } else {
         ptrs.push(&raw const array2);
     }
+    println!("d");
     assert_inorder(&ptrs, compare_au8);
 
     let u8_ = (0u8, 1u8);
@@ -194,16 +204,18 @@ fn main_raw() {
         let v : [*const (); 2] = unsafe { mem::transmute(*v) };
         u.cmp(&v)
     });
+    println!("e");
     assert_inorder(buf, compare_foo);
 
     // check ordering for structs containing arrays
-    let ss: (S<[u8; 2]>,
+    let ss: C<S<[u8; 2]>,
              S<[u8; 3]>,
-             S<[u8; 2]>) = (
+             S<[u8; 2]>> = C(
         S(7, [8, 9]),
         S(10, [11, 12, 13]),
         S(4, [5, 6])
     );
+    println!("f");
     assert_inorder(&[
         &raw const ss.0 as *const S<[u8]>,
         &raw const ss.1 as *const S<[u8]>,
