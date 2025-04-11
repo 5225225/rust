@@ -1484,6 +1484,10 @@ impl<'tcx> TyCtxt<'tcx> {
             field_shuffle_seed ^= user_seed;
         }
 
+        if self.has_attr(did, sym::rustc_never_randomize_layout) {
+            flags.insert(ReprFlags::NEVER_RANDOMIZE_LAYOUT);
+        }
+
         if let Some(reprs) = attr::find_attr!(self.get_all_attrs(did), AttributeKind::Repr(r) => r)
         {
             for (r, _) in reprs {
